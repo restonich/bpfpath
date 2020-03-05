@@ -27,11 +27,6 @@ static inline bool IS_ERR(const void *ptr)
 	return IS_ERR_VALUE((unsigned long)ptr);
 }
 
-#define PROG_FILE 	"./obj/kprobe_prog.o"
-#define PROG_SEC 	"kprobe/kfree_skb"
-#define PROG_MAP	"skb_map"
-#define KPROBE_FUNC	"kfree_skb"
-
 int main(int argc, const char **argv)
 {
 	struct bpf_object *obj;
@@ -45,6 +40,10 @@ int main(int argc, const char **argv)
 		printf("Usage: sudo ./bpf_loader OBJ SEC MAP KPROBE");
 		return 0;
 	}
+	/* there are no parsing or checks performed, so input must be right
+	 * parsing and testing would be performed by bpftool when I will (hopefully)
+	 * pactch kprobe adding functionality to it
+	 */
 	strncpy(obj_file, argv[1], 64);
 	strncpy(prog_sec, argv[2], 64);
 	strncpy(map_name, argv[3], 64);
