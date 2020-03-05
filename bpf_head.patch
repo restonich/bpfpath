@@ -1,0 +1,29 @@
+diff --git a/include/uapi/linux/bpf.h b/include/uapi/linux/bpf.h
+index dbbcf0b02970..58bff3f8709f 100644
+--- a/include/uapi/linux/bpf.h
++++ b/include/uapi/linux/bpf.h
+@@ -3081,6 +3081,8 @@ struct __sk_buff {
+ 	__u32 wire_len;
+ 	__u32 gso_segs;
+ 	__bpf_md_ptr(struct bpf_sock *, sk);
++
++	__u32 head;
+ };
+ 
+ struct bpf_tunnel_key {
+diff --git a/net/core/filter.c b/net/core/filter.c
+index f797b1599c92..173596de551d 100644
+--- a/net/core/filter.c
++++ b/net/core/filter.c
+@@ -7589,6 +7589,11 @@ static u32 bpf_convert_ctx_access(enum bpf_access_type type,
+ 				      si->dst_reg, si->src_reg,
+ 				      offsetof(struct sk_buff, sk));
+ 		break;
++	case offsetof(struct __sk_buff, head):
++		*insn++ = BPF_LDX_MEM(BPF_DW, si->dst_reg, si->src_reg,
++				      bpf_target_off(struct sk_buff, head, 8,
++						     target_size));
++		break;
+ 	}
+ 
+ 	return insn - insn_buf;
