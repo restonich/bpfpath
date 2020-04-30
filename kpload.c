@@ -25,10 +25,9 @@ int main(int argc, const char **argv)
 	int skb_ptr_map_fd = -1, ts_map_fd = -1, path_map_fd = -1;
 	int err;
 
-	struct bpf_object_open_attr open_attr = {0};
-	struct bpf_object_load_attr load_attr = {0};
-	enum bpf_attach_type expected_attach_type = 0;
-	uint32_t ifindex = 0;
+	enum bpf_prog_type prog_type;
+	enum bpf_attach_type expected_attach_type;
+	//uint32_t ifindex = 0;
 	struct bpf_object *obj = NULL;
 	struct bpf_program *prog = NULL;
 	struct bpf_map *map = NULL;
@@ -39,10 +38,6 @@ int main(int argc, const char **argv)
 		return 0;
 	}
 
-	/* there are no parsing or checks performed, so input must be right
-	 * parsing and testing would be performed by bpftool when I will (hopefully)
-	 * pactch kprobe adding functionality to it
-	 */
 	snprintf(obj_file,    256, "%s", argv[1]);
 	snprintf(kprobe_name, 256, "%s", argv[2]);
 
@@ -71,56 +66,56 @@ int main(int argc, const char **argv)
 	}
 
 	snprintf(prog_sec, 256, "kprobe/%s", kprobe_name);
-	err = libbpf_prog_type_by_name(prog_sec, &open_attr.prog_type, &expected_attach_type);
+	err = libbpf_prog_type_by_name(prog_sec, &prog_type, &expected_attach_type);
 	if (err < 0) {
 		printf("Failed to determine program type.\n");
 		goto cleanup;
 	}
 
-	open_attr.file = obj_file;
-	obj = bpf_object__open_xattr(&open_attr);
+	obj = bpf_object__open(obj_file);
 	if (obj == NULL) {
 		printf("Failed to open object file.\n");
 		goto cleanup;
 	}
-
+#if 0
 	bpf_object__for_each_program(prog, obj) {
 		bpf_program__set_ifindex(prog, ifindex);
-		bpf_program__set_type(prog, open_attr.prog_type);
+		bpf_program__set_type(prog, prog_type);
 		bpf_program__set_expected_attach_type(prog, expected_attach_type);
 	}
+#endif
 
 	bpf_object__for_each_map(map, obj) {
-		if (!strcmp(bpf_map__name(map), SKB_PTR_MAP)) {
+		const char *map_name = bpf_map__name(map);
+		if (!strcmp(map_name, SKB_PTR_MAP)) {
 			err = bpf_map__reuse_fd(map, skb_ptr_map_fd);
 			if (err) {
 				printf("Unable to reuse map \"%s\".\n", SKB_PTR_MAP);
 				goto cleanup;
 			}
-		} else if (!strcmp(bpf_map__name(map), TS_MAP)) {
+		} else if (!strcmp(map_name, TS_MAP)) {
 			err = bpf_map__reuse_fd(map, ts_map_fd);
 			if (err) {
 				printf("Unable to reuse map \"%s\".\n", TS_MAP);
 				goto cleanup;
 			}
-		} else if (!strcmp(bpf_map__name(map), PATH_MAP)) {
+		} else if (!strcmp(map_name, PATH_MAP)) {
 			err = bpf_map__reuse_fd(map, path_map_fd);
 			if (err) {
 				printf("Unable to reuse map \"%s\".\n", PATH_MAP);
 				goto cleanup;
 			}
 		} else {
-			printf("Wrong map names inside object file.\n");
-			goto cleanup;
+			printf("Undefined map inside object file: %s\n", map_name);
 		}
 	}
 
-	load_attr.obj = obj;
-	err = bpf_object__load_xattr(&load_attr);
+	err = bpf_object__load(obj);
 	if (err) {
 		printf("Failed to load object file.\n");
 		goto cleanup;
 	}
+	printf("check\n");
 
 	prog = NULL;
 	prog = bpf_program__next(NULL, obj);
