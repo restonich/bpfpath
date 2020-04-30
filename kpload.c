@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <errno.h>
+
+#include "bpf/bpf.h"
 #include "bpf/libbpf.h"
 
 #define CHECK(cond, tag, format...) ({		\
@@ -29,26 +31,37 @@ static inline bool IS_ERR(const void *ptr)
 
 int main(int argc, const char **argv)
 {
+	char obj_file[64], kprobe_name[64], map_name[64];
+	char prog_sec[64], map_path[64];
+	int prog_fd, map_fd, err;
+
 	struct bpf_object *obj;
 	struct bpf_program *prog;
 	struct bpf_map *map;
 	struct bpf_link *link = NULL;
-	char obj_file[64], prog_sec[64], map_name[64], kprobe_name[64];
-	int prog_fd, map_fd, err;
 
-	if (argc < 5) {
-		printf("Usage: sudo ./bpf_loader OBJ SEC MAP KPROBE");
+	if (argc < 4) {
+		printf("Usage: sudo ./kpload OBJ_FILE KPROBE_NAME MAP_NAME\n");
 		return 0;
 	}
 	/* there are no parsing or checks performed, so input must be right
 	 * parsing and testing would be performed by bpftool when I will (hopefully)
 	 * pactch kprobe adding functionality to it
 	 */
-	strncpy(obj_file, argv[1], 64);
-	strncpy(prog_sec, argv[2], 64);
-	strncpy(map_name, argv[3], 64);
-	strncpy(kprobe_name, argv[4], 64);
+	snprintf(obj_file,    64, "%s", argv[1]);
+	snprintf(kprobe_name, 64, "%s", argv[2]);
+	snprintf(map_name,    64, "%s", argv[3]);
 
+	snprintf(prog_sec, 64, "kprobe/%s", kprobe_name);
+	snprintf(map_path, 64, "/sys/fs/bpf/kp_maps/%s", map_name);
+
+	map_fd = bpf_obj_get(map_path);
+	if (map_fd < 0) {
+		printf("Map \"%s\" not found! Check \"/sys/fs/bpf/kp_maps\" directory.\n", map_name);
+		return 0;
+	}
+
+#if 0
 	/* load program */
 	err = bpf_prog_load(obj_file, BPF_PROG_TYPE_KPROBE, &obj, &prog_fd);
 	if (CHECK(err, "bpf_prog_load", "err %d errno %d\n", err, errno)) {
@@ -73,7 +86,7 @@ int main(int argc, const char **argv)
 	}
 
 	/* attach program to kprobe */
-	link = bpf_program__attach_kprobe(prog, false /* retprobe */, KPROBE_FUNC);
+	link = bpf_program__attach_kprobe(prog, false /* retprobe */, kprobe_name);
 	if (CHECK(IS_ERR(link), "bpf_program__attach_kprobe", "err %ld\n", PTR_ERR(link))) {
 		link = NULL;
 		goto cleanup;
@@ -88,6 +101,7 @@ cleanup:
 	bpf_link__destroy(link);
 	bpf_object__close(obj);
 
+#endif
 	return 0;
 }
 
