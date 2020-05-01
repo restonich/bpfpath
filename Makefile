@@ -6,37 +6,53 @@ LDIR = ./lib64
 PROGDIR = ./prog
 OBJDIR = ./obj
 
-# this Makefile will basically compile all programs in ./prog directory
-PROG := $(shell ls ./prog)
-OBJ := $(patsubst %.c,$(OBJDIR)/%.o,$(PROG))
 DEBUG ?= no
 
-# program parameters for tc loader
-TC_PROG ?= $(OBJDIR)/tc_prog.o
-TC_SEC ?= main
+# TC program
+TC_PROG = tc_prog
+TC_PROG_SEC = main
 ETH_DEV ?= ens34
 
+# kprobe program
+KP_PROG = kp_prog
+KP_SEC ?= kprobe/icmp_rcv
+KP_NUM ?= 0x1
+KP_NAME = $(KP_SEC:kprobe/%=%)
+KP_OBJ = $(KP_NAME)_$(KP_PROG)
+
 # custom loader and libs for it
-LOADER = kpload
 LIBBPF = $(LDIR)/libbpf.a
 LIBS = -lelf -lz
+LOADER = kpload
 
 PHONY := all
-all: prog loader
+all: loader tc_prog kp_prog
 
-PHONY += prog
-prog: $(OBJ)
+PHONY += tc_prog
+tc_prog: $(OBJDIR)/$(TC_PROG).o
+
+PHONY += kp_prog
+kp_prog: $(OBJDIR)/$(KP_OBJ).o
 
 PHONY += loader
 loader: $(LOADER)
 
-$(OBJDIR)/%.o : $(PROGDIR)/%.c
+$(OBJDIR)/$(TC_PROG).o : $(PROGDIR)/$(TC_PROG).c
 	@if [ ! -d obj ]; then mkdir obj; fi
 	$(CC) $(CFLAGS) -target bpf -o $@ -c $^
 	@if [ "$(DEBUG)" = "yes" ]; then $(CC) $(CFLAGS) -target bpf -g -o $@.g -c $^; fi
 
+$(OBJDIR)/$(KP_NAME)_$(KP_PROG).o : $(PROGDIR)/$(KP_PROG).c
+	@if [ ! -d obj ]; then mkdir obj; fi
+	$(CC) $(CFLAGS) -target bpf -DKP_SEC=\"$(KP_SEC)\" -DKP_NUM=$(KP_NUM) -o $@ -c $^
+	@if [ "$(DEBUG)" = "yes" ]; then $(CC) $(CFLAGS) -target bpf -DKP_SEC=\"$(KP_SEC)\" -DKP_NUM=$(KP_NUM) -g -o $@.g -c $^; fi
+
 $(LOADER) : $(LOADER).c $(LIBBPF)
 	$(CC) $(CFLAGS) $(LIBS) -o $@ $^
+
+PHONY += kp_load
+kp_load : kp_prog loader
+	sudo ./$(LOADER) $(OBJDIR)/$(KP_OBJ).o $(KP_NAME)
 
 PHONY += tc_reattach
 tc_reattach: tc_detach tc_attach
@@ -47,7 +63,7 @@ tc_setup:
 
 PHONY += tc_attach
 tc_attach:
-	sudo tc filter add dev $(ETH_DEV) ingress bpf da obj $(TC_PROG) sec $(TC_SEC)
+	sudo tc filter add dev $(ETH_DEV) ingress bpf da obj $(OBJDIR)/$(TC_PROG).o sec $(TC_PROG_SEC)
 
 PHONY += tc_detach
 tc_detach:

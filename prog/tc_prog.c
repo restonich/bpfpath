@@ -2,41 +2,46 @@
 
 #include <linux/if_ether.h>
 #include <linux/ip.h>
+#include <linux/in.h>
 #include <iproute2/bpf_elf.h>
 
-#define IP_P_ICMP 0x01
 #define IP_SRC 0xAC1F000A /* 172.31.0.10 */
 
-#define MAP_SIZE_KEY 4
-#define FUNC_NAME_LEN 64
+#define MAP_KEY_SIZE	 4
+#define SKB_PTR_VAL_SIZE sizeof(void *)
+#define SKB_PTR_VAL_AMT	 1
+#define TSTAMP_VAL_SIZE	 sizeof(uint64_t)
+#define TSTAMP_VAL_AMT	 256
+#define PATH_VAL_SIZE	 sizeof(uint8_t)
+#define PATH_VAL_AMT	 256
 
-#define FUNC_NAME "__netif_receive_skb_core"
+#define FUNC_NUM 0x0
 
 __section("maps")
 struct bpf_elf_map skb_ptr_map = {
 	.type 		= BPF_MAP_TYPE_ARRAY,
-	.size_key 	= MAP_SIZE_KEY,
-	.size_value 	= sizeof(void *),
-	.pinning 	= PIN_GLOBAL_NS,
-	.max_elem 	= 1
+	.size_key 	= MAP_KEY_SIZE,
+	.size_value 	= SKB_PTR_VAL_SIZE,
+	.max_elem 	= SKB_PTR_VAL_AMT,
+	.pinning 	= PIN_GLOBAL_NS
 };
 
 __section("maps")
-struct bpf_elf_map ts_map = {
+struct bpf_elf_map tstamp_map = {
 	.type 		= BPF_MAP_TYPE_ARRAY,
-	.size_key 	= MAP_SIZE_KEY,
-	.size_value 	= sizeof(uint64_t),
-	.pinning 	= PIN_GLOBAL_NS,
-	.max_elem 	= 2
+	.size_key 	= MAP_KEY_SIZE,
+	.size_value 	= TSTAMP_VAL_SIZE,
+	.max_elem 	= TSTAMP_VAL_AMT,
+	.pinning 	= PIN_GLOBAL_NS
 };
 
 __section("maps")
 struct bpf_elf_map path_map = {
 	.type 		= BPF_MAP_TYPE_ARRAY,
-	.size_key 	= MAP_SIZE_KEY,
-	.size_value 	= FUNC_NAME_LEN,
-	.pinning 	= PIN_GLOBAL_NS,
-	.max_elem 	= 2
+	.size_key 	= MAP_KEY_SIZE,
+	.size_value 	= PATH_VAL_SIZE,
+	.max_elem 	= PATH_VAL_AMT,
+	.pinning 	= PIN_GLOBAL_NS
 };
 
 /* copy of 'struct ethhdr' without __packed */
@@ -49,18 +54,19 @@ struct eth_hdr {
 __section("main")
 int icmp_check(struct __sk_buff *skb)
 {
-	uint64_t ts = ktime_get_ns();
-	void *skb_head = (void *)(long)skb->head;
-
-	void *data = (void *)(long)skb->data;
+	void *data     = (void *)(long)skb->data;
 	void *data_end = (void *)(long)skb->data_end;
 	struct ethhdr *eth = data;
-	struct iphdr *iph = data + sizeof(*eth);
+	struct iphdr  *iph = data + sizeof(*eth);
+	uint32_t skb_ptr_key;
+	void    *skb_ptr_val;
+	void   **skb_ptr_cur;
+	uint32_t tstamp_key;
+	uint64_t tstamp_val;
+	uint32_t path_key;
+	uint8_t  path_value;
+	int err;
 
-	printt("--------TC_PROG--------\n");
-	printt("head: \t\t%lx\n", skb_head);
-	printt("skb->head: \t\t%x\n", skb->head);
-	printt("skb: \t\t%lx\n", skb);
 	/* Bounds check */
 	if (data + sizeof(*eth) + sizeof(*iph) > data_end) {
 		return TC_ACT_OK;
@@ -72,7 +78,7 @@ int icmp_check(struct __sk_buff *skb)
 	}
 
 	/* Check if ICMP protocol */
-	if (iph->protocol != IP_P_ICMP) {
+	if (iph->protocol != IPPROTO_ICMP) {
 		return TC_ACT_OK;
 	}
 
@@ -81,55 +87,44 @@ int icmp_check(struct __sk_buff *skb)
 		return TC_ACT_OK;
 	}
 
-	uint32_t skb_ptr_key = 0;
-	uint64_t *stored_val;
-	stored_val = map_lookup_elem(&skb_ptr_map, &skb_ptr_key);
-	if (stored_val != NULL) {
-		if (*stored_val != 0) {
-			int r;
-			skb_head = 0;
-			r = map_update_elem(&skb_ptr_map, &skb_ptr_key, &skb_head, BPF_ANY);
-			if (r < 0) {
-				printt("skb not stored!\n");
-				return TC_ACT_OK;
-			}
+	printt("--------SKB MATCH--------\n");
 
-			printt("skb nulled\n");
-			return TC_ACT_OK;
-		} else {
-			int r;
-
-			*stored_val = (long)skb;
-#if 0
-
-			r = map_update_elem(&skb_ptr_map, &skb_ptr_value, &skb, BPF_ANY);
-			if (r < 0) {
-				printt("skb not stored!\n");
-				return TC_ACT_OK;
-			}
-
-#endif
-			uint32_t ts_key = 0;
-			r = map_update_elem(&ts_map, &ts_key, &ts, BPF_ANY);
-			if (r < 0) {
-				printt("ts not stored!\n");
-				return TC_ACT_OK;
-			}
-
-			uint32_t path_key = 0;
-			char path_value[FUNC_NAME_LEN] = FUNC_NAME;
-			r = map_update_elem(&path_map, &path_key, &path_value, BPF_ANY);
-			if (r < 0) {
-				printt("function name not stored!\n");
-				return TC_ACT_OK;
-			}
-
-			printt("skb stored\n");
-			return TC_ACT_OK;
-		}
+	skb_ptr_key = 0;
+	skb_ptr_cur = map_lookup_elem(&skb_ptr_map, &skb_ptr_key);
+	if (skb_ptr_cur == NULL) {
+		printt("This should never happen.\n");
+		return TC_ACT_OK;
 	}
 
-	printt("Bad key!\n");
+	if (*skb_ptr_cur != 0) {
+		printt("skb_ptr already stored\n");
+		return TC_ACT_OK;
+	} 	
+
+	/* That is a hack. This value needs to be stored properly */
+	skb_ptr_val = (void *)skb;
+	*skb_ptr_cur = skb_ptr_val;
+	printt("skb_ptr: \t\t%lx\n", skb_ptr_val);
+
+	/* tstamp upon arrival here */
+	tstamp_key = FUNC_NUM;
+	tstamp_val = ktime_get_ns();
+	err = map_update_elem(&tstamp_map, &tstamp_key, &tstamp_val, BPF_ANY);
+	if (err < 0) {
+		printt("ts not stored!\n");
+		return TC_ACT_OK;
+	}
+	printt("tstamp_val: \t\t%lx\n", tstamp_val);
+
+	path_key = FUNC_NUM;
+	path_value = 0x1;
+	err = map_update_elem(&path_map, &path_key, &path_value, BPF_ANY);
+	if (err < 0) {
+		printt("function name not stored!\n");
+		return TC_ACT_OK;
+	}
+	printt("path_key: \t\t%lx\n", path_key);
+
 	return TC_ACT_OK;
 }
 

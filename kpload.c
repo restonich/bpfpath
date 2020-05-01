@@ -13,7 +13,7 @@
 #endif
 
 #define SKB_PTR_MAP "skb_ptr_map"
-#define TS_MAP      "ts_map"
+#define TSTAMP_MAP  "tstamp_map"
 #define PATH_MAP    "path_map"
 
 #define KPROBE_TYPE 0 /* not retprobe */
@@ -22,16 +22,16 @@ int main(int argc, const char **argv)
 {
 	char obj_file[256], kprobe_name[256];
 	char prog_sec[256], map_path[256], pin_file[256];
-	int skb_ptr_map_fd = -1, ts_map_fd = -1, path_map_fd = -1;
-	int err;
-
+	int skb_ptr_map_fd = -1;
+	int tstamp_map_fd = -1;
+	int path_map_fd = -1;
 	enum bpf_prog_type prog_type;
 	enum bpf_attach_type expected_attach_type;
-	//uint32_t ifindex = 0;
 	struct bpf_object *obj = NULL;
 	struct bpf_program *prog = NULL;
 	struct bpf_map *map = NULL;
 	struct bpf_link *link = NULL;
+	int err;
 
 	if (argc < 3) {
 		printf("Usage: sudo ./kpload OBJ_FILE KPROBE_NAME\n");
@@ -50,10 +50,10 @@ int main(int argc, const char **argv)
 	}
 
 	memset(map_path, 0, 256);
-	snprintf(map_path, 256, "/sys/fs/bpf/tc/globals/%s", TS_MAP);
-	ts_map_fd = bpf_obj_get(map_path);
-	if (ts_map_fd < 0) {
-		printf("Map \"%s\" not found! Check \"/sys/fs/bpf/tc/globals\" directory.\n", TS_MAP);
+	snprintf(map_path, 256, "/sys/fs/bpf/tc/globals/%s", TSTAMP_MAP);
+	tstamp_map_fd = bpf_obj_get(map_path);
+	if (tstamp_map_fd < 0) {
+		printf("Map \"%s\" not found! Check \"/sys/fs/bpf/tc/globals\" directory.\n", TSTAMP_MAP);
 		goto cleanup;
 	}
 
@@ -93,10 +93,10 @@ int main(int argc, const char **argv)
 				printf("Unable to reuse map \"%s\".\n", SKB_PTR_MAP);
 				goto cleanup;
 			}
-		} else if (!strcmp(map_name, TS_MAP)) {
-			err = bpf_map__reuse_fd(map, ts_map_fd);
+		} else if (!strcmp(map_name, TSTAMP_MAP)) {
+			err = bpf_map__reuse_fd(map, tstamp_map_fd);
 			if (err) {
-				printf("Unable to reuse map \"%s\".\n", TS_MAP);
+				printf("Unable to reuse map \"%s\".\n", TSTAMP_MAP);
 				goto cleanup;
 			}
 		} else if (!strcmp(map_name, PATH_MAP)) {
@@ -145,7 +145,7 @@ int main(int argc, const char **argv)
 	getchar();
 cleanup:
 	bpf_object__close(obj);
-	close(ts_map_fd);
+	close(tstamp_map_fd);
 	close(path_map_fd);
 	bpf_link__destroy(link);
 #if 0

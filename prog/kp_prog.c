@@ -2,95 +2,112 @@
 #include <linux/version.h>
 #include "bpf_api.h"
 
-#define _(P) ({typeof(P) val = 0; probe_read(&val, sizeof(val), &P); val;})
+#define MAP_KEY_SIZE	 4
+#define SKB_PTR_VAL_SIZE sizeof(void *)
+#define SKB_PTR_VAL_AMT	 1
+#define TSTAMP_VAL_SIZE	 sizeof(uint64_t)
+#define TSTAMP_VAL_AMT	 256
+#define PATH_VAL_SIZE	 sizeof(uint8_t)
+#define PATH_VAL_AMT	 256
 
-#define MAP_SIZE_KEY 4
-#define FUNC_NAME_LEN 64
+#if 0
+#define KP_SEC "kprobe/icmp_rcv"
+#define KP_NUM 0x1
+#endif
 
-#ifndef FUNC_NAME
-# define FUNC_NAME "undefined_func"
+#define KP_SEC_UNDEF "kprobe/kfree_skb"
+#define KP_NUM_UNDEF 0xff
+
+#ifndef KP_SEC
+# define KP_SEC KP_SEC_UNDEF
+#endif
+
+#ifndef KP_NUM
+# define KP_NUM KP_NUM_UNDEF
 #endif
 
 __section("maps")
 struct bpf_map_def skb_ptr_map = {
 	.type	     = BPF_MAP_TYPE_ARRAY,
-	.key_size    = MAP_SIZE_KEY,
-	.value_size  = sizeof(void *),
-	.max_entries = 1
+	.key_size    = MAP_KEY_SIZE,
+	.value_size  = SKB_PTR_VAL_SIZE,
+	.max_entries = SKB_PTR_VAL_AMT
 };
 
 __section("maps")
-struct bpf_map_def ts_map = {
+struct bpf_map_def tstamp_map = {
 	.type	     = BPF_MAP_TYPE_ARRAY,
-	.key_size    = MAP_SIZE_KEY,
-	.value_size  = sizeof(uint64_t),
-	.max_entries = 2
+	.key_size    = MAP_KEY_SIZE,
+	.value_size  = TSTAMP_VAL_SIZE,
+	.max_entries = TSTAMP_VAL_AMT
 };
 
 __section("maps")
 struct bpf_map_def path_map = {
 	.type	     = BPF_MAP_TYPE_ARRAY,
-	.key_size    = MAP_SIZE_KEY,
-	.value_size  = FUNC_NAME_LEN,
-	.max_entries = 2
+	.key_size    = MAP_KEY_SIZE,
+	.value_size  = PATH_VAL_SIZE,
+	.max_entries = PATH_VAL_AMT
 };
 
-__section("kprobe/icmp_rcv")
+__section(KP_SEC)
 int kp_program(struct pt_regs *ctx)
 {
-	void *skb, **skb_ptr;
-	uint64_t ts = ktime_get_ns();
-	uint32_t r;
+	void    *skb;
+	uint32_t skb_ptr_key;
+	void    *skb_ptr_val;
+	void   **skb_ptr_cur;
+	uint32_t tstamp_key;
+	uint64_t tstamp_val;
+	uint32_t path_key;
+	uint8_t  path_value;
+	int err;
 
-	printt("--------KP_PROG--------\n");
-	/* non-portable! works for the given kernel only */
-	skb = (void *) PT_REGS_PARM1(ctx);
-	printt("skb: \t\t%llx\n", skb);
-
-	uint32_t skb_ptr_key = 0;
-	skb_ptr = map_lookup_elem(&skb_ptr_map, &skb_ptr_key);
-	if (skb_ptr != NULL) {
-		if (*skb_ptr != 0) {
-			printt("skb_ptr: \t\t%llx\n", *skb_ptr);
-		} else {
-			printt("skb_ptr: \t\t%llx\n", *skb_ptr);
-			return 0;
-		}
-	} else {
-		printt("skb_ptr is NULL\n");
+	skb_ptr_key = 0;
+	skb_ptr_cur = map_lookup_elem(&skb_ptr_map, &skb_ptr_key);
+	if (skb_ptr_cur == NULL) {
+		printt("This should never happen.\n");
 		return 0;
 	}
-#if 1
-	if (skb == *skb_ptr) {
-		printt("MATCH!\n");
 
-		uint64_t skb_ptr_value = 0;
-		r = map_update_elem(&skb_ptr_map, &skb_ptr_key, &skb_ptr_value, BPF_ANY);
-		if (r < 0) {
-			printt("skb not stored!\n");
-			return 0;
-		}
+	/* non-portable! works for the given kernel only */
+	skb = (void *) PT_REGS_PARM1(ctx);
 
-		uint32_t ts_key = 1;
-		r = map_update_elem(&ts_map, &ts_key, &ts, BPF_ANY);
-		if (r < 0) {
-			printt("ts not stored!\n");
-			return 0;
-		}
-/*
-		uint32_t path_key = 1;
-		char path_value[FUNC_NAME_LEN] = FUNC_NAME;
-		r = map_update_elem(&path_map, &path_key, &path_value, BPF_ANY);
-		if (r < 0) {
-			printt("function name not stored!\n");
-			return 0;
-		}
-		*/
-		
-		printt("ts: %lx\n", ts);
-		return 0;
-	} else {
+	printt("--------KP_PROG--------\n");
+	printt("skb: \t\t%llx\n", skb);
+	printt("*skb_ptr_cur: \t%llx\n", *skb_ptr_cur);
+
+	if (skb != *skb_ptr_cur) {
 		printt("Nah\n");
+	}
+
+	printt("Match!\n");
+
+	tstamp_key = KP_NUM;
+	tstamp_val = ktime_get_ns();
+	err = map_update_elem(&tstamp_map, &tstamp_key, &tstamp_val, BPF_ANY);
+	if (err < 0) {
+		printt("ts not stored!\n");
+		return TC_ACT_OK;
+	}
+	printt("tstamp_val: \t\t%lx\n", tstamp_val);
+
+	path_key = KP_NUM;
+	path_value = 0x1;
+	err = map_update_elem(&path_map, &path_key, &path_value, BPF_ANY);
+	if (err < 0) {
+		printt("function name not stored!\n");
+		return TC_ACT_OK;
+	}
+	printt("path_key: \t\t%lx\n", path_key);
+	
+	/* This should be done in user space */
+#if 1
+	skb_ptr_val = 0;
+	err = map_update_elem(&skb_ptr_map, &skb_ptr_key, &skb_ptr_val, BPF_ANY);
+	if (err < 0) {
+		printt("skb not stored!\n");
+		return 0;
 	}
 #endif
 
