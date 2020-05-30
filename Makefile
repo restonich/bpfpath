@@ -14,11 +14,11 @@ TC_PROG_SEC = main
 ETH_DEV ?= ens34
 
 # kprobe program
-KP_PROG = kp_prog
-KP_SEC ?= kprobe/icmp_rcv
-KP_NUM ?= 0x1
-KP_NAME = $(KP_SEC:kprobe/%=%)
-KP_OBJ = $(KP_NAME)_$(KP_PROG)
+KP_PROG  = kp_prog
+KP_NUM  ?= 127
+KP_NAME ?= kfree_skb
+KP_FIN  ?= 1
+KP_OBJ   = $(KP_NAME)_$(KP_PROG)
 
 # custom loader and libs for it
 LIBBPF = $(LDIR)/libbpf.a
@@ -42,9 +42,9 @@ $(OBJDIR)/$(TC_PROG).o : $(PROGDIR)/$(TC_PROG).c
 	$(CC) $(CFLAGS) -target bpf -o $@ -c $^
 	@if [ "$(DEBUG)" = "yes" ]; then $(CC) $(CFLAGS) -target bpf -g -o $@.g -c $^; fi
 
-$(OBJDIR)/$(KP_NAME)_$(KP_PROG).o : $(PROGDIR)/$(KP_PROG).c
+$(OBJDIR)/$(KP_OBJ).o : $(PROGDIR)/$(KP_PROG).c
 	@if [ ! -d obj ]; then mkdir obj; fi
-	$(CC) $(CFLAGS) -target bpf -DKP_SEC=\"$(KP_SEC)\" -DKP_NUM=$(KP_NUM) -o $@ -c $^
+	$(CC) $(CFLAGS) -target bpf -o $@ -c $^ -DKP_NUM=$(KP_NUM) -DKP_NAME=$(KP_NAME) -DKP_FIN=$(KP_FIN)
 	@if [ "$(DEBUG)" = "yes" ]; then $(CC) $(CFLAGS) -target bpf -DKP_SEC=\"$(KP_SEC)\" -DKP_NUM=$(KP_NUM) -g -o $@.g -c $^; fi
 
 $(LOADER) : $(LOADER).c $(LIBBPF)
@@ -88,4 +88,3 @@ cscope:
 	@rm cscope.files
 
 .PHONY: $(PHONY)
-

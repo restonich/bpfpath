@@ -2,106 +2,48 @@
 #include <errno.h>
 #include <stdint.h>
 #include <unistd.h>
-
+#include <stdlib.h>
+#include <string.h>
 #include <linux/bpf.h>
 
 #include "bpf/bpf.h"
 #include "bpf/libbpf.h"
 
-#ifndef NULL
-# define NULL ((void *)0)
-#endif
-
-#define SKB_PTR_MAP "skb_ptr_map"
-#define TSTAMP_MAP  "tstamp_map"
-#define PATH_MAP    "path_map"
+#define MAP_PIN_PATH "/sys/fs/bpf/tc/globals/"
+#define SKB_MAP  "skb_map"
+#define PATH_MAP "path_map"
 
 #define KPROBE_TYPE 0 /* not retprobe */
 
-int main(int argc, const char **argv)
+int load_and_attach(const char *kp_name, int skb_map_fd, int path_map_fd,
+		    struct bpf_object **obj_p, struct bpf_link **link_p)
 {
-	char obj_file[256], kprobe_name[256];
-	char prog_sec[256], map_path[256], pin_file[256];
-	int skb_ptr_map_fd = -1;
-	int tstamp_map_fd = -1;
-	int path_map_fd = -1;
-	enum bpf_prog_type prog_type;
-	enum bpf_attach_type expected_attach_type;
-	struct bpf_object *obj = NULL;
-	struct bpf_program *prog = NULL;
-	struct bpf_map *map = NULL;
-	struct bpf_link *link = NULL;
-	int err;
+	char kp_objs_path[256];
+	struct bpf_object   *obj = NULL;
+	struct bpf_link    *link = NULL;
+	struct bpf_program *prog;
+	struct bpf_map      *map;
+	int r;
 
-	if (argc < 3) {
-		printf("Usage: sudo ./kpload OBJ_FILE KPROBE_NAME\n");
-		return 0;
-	}
-
-	snprintf(obj_file,    256, "%s", argv[1]);
-	snprintf(kprobe_name, 256, "%s", argv[2]);
-
-	memset(map_path, 0, 256);
-	snprintf(map_path, 256, "/sys/fs/bpf/tc/globals/%s", SKB_PTR_MAP);
-	skb_ptr_map_fd = bpf_obj_get(map_path);
-	if (skb_ptr_map_fd < 0) {
-		printf("Map \"%s\" not found! Check \"/sys/fs/bpf/tc/globals\" directory.\n", SKB_PTR_MAP);
-		goto cleanup;
-	}
-
-	memset(map_path, 0, 256);
-	snprintf(map_path, 256, "/sys/fs/bpf/tc/globals/%s", TSTAMP_MAP);
-	tstamp_map_fd = bpf_obj_get(map_path);
-	if (tstamp_map_fd < 0) {
-		printf("Map \"%s\" not found! Check \"/sys/fs/bpf/tc/globals\" directory.\n", TSTAMP_MAP);
-		goto cleanup;
-	}
-
-	memset(map_path, 0, 256);
-	snprintf(map_path, 256, "/sys/fs/bpf/tc/globals/%s", PATH_MAP);
-	path_map_fd = bpf_obj_get(map_path);
-	if (path_map_fd < 0) {
-		printf("Map \"%s\" not found! Check \"/sys/fs/bpf/tc/globals\" directory.\n", PATH_MAP);
-		goto cleanup;
-	}
-
-	snprintf(prog_sec, 256, "kprobe/%s", kprobe_name);
-	err = libbpf_prog_type_by_name(prog_sec, &prog_type, &expected_attach_type);
-	if (err < 0) {
-		printf("Failed to determine program type.\n");
-		goto cleanup;
-	}
-
-	obj = bpf_object__open(obj_file);
+	snprintf(kp_objs_path, 256, "obj/%s_kp_prog.o", kp_name);
+	obj = bpf_object__open(kp_objs_path);
 	if (obj == NULL) {
 		printf("Failed to open object file.\n");
 		goto cleanup;
 	}
-#if 0
-	bpf_object__for_each_program(prog, obj) {
-		bpf_program__set_ifindex(prog, ifindex);
-		bpf_program__set_type(prog, prog_type);
-		bpf_program__set_expected_attach_type(prog, expected_attach_type);
-	}
-#endif
 
 	bpf_object__for_each_map(map, obj) {
 		const char *map_name = bpf_map__name(map);
-		if (!strcmp(map_name, SKB_PTR_MAP)) {
-			err = bpf_map__reuse_fd(map, skb_ptr_map_fd);
-			if (err) {
-				printf("Unable to reuse map \"%s\".\n", SKB_PTR_MAP);
-				goto cleanup;
-			}
-		} else if (!strcmp(map_name, TSTAMP_MAP)) {
-			err = bpf_map__reuse_fd(map, tstamp_map_fd);
-			if (err) {
-				printf("Unable to reuse map \"%s\".\n", TSTAMP_MAP);
+
+		if (!strcmp(map_name, SKB_MAP)) {
+			r = bpf_map__reuse_fd(map, skb_map_fd);
+			if (r) {
+				printf("Unable to reuse map \"%s\".\n", SKB_MAP);
 				goto cleanup;
 			}
 		} else if (!strcmp(map_name, PATH_MAP)) {
-			err = bpf_map__reuse_fd(map, path_map_fd);
-			if (err) {
+			r = bpf_map__reuse_fd(map, path_map_fd);
+			if (r) {
 				printf("Unable to reuse map \"%s\".\n", PATH_MAP);
 				goto cleanup;
 			}
@@ -110,85 +52,101 @@ int main(int argc, const char **argv)
 		}
 	}
 
-	err = bpf_object__load(obj);
-	if (err) {
+	r = bpf_object__load(obj);
+	if (r) {
 		printf("Failed to load object file.\n");
 		goto cleanup;
 	}
-	printf("check\n");
 
-	prog = NULL;
 	prog = bpf_program__next(NULL, obj);
 	if (!prog) {
 		printf("Object file doesn't contain any bpf program.\n");
 		goto cleanup;
 	}
 
-	snprintf(pin_file, 256, "/sys/fs/bpf/kp_progs/%s_prog", kprobe_name);
-	err = bpf_obj_pin(bpf_program__fd(prog), pin_file);
-	if (err) {
-		printf("Failed to pin program.\n");
-		goto cleanup;
-	}
-
-	/* attach program to kprobe */
-	link = bpf_program__attach_kprobe(prog, KPROBE_TYPE, kprobe_name);
+	link = bpf_program__attach_kprobe(prog, KPROBE_TYPE, kp_name);
 	if (link == NULL) {
 		printf("Failed to attach to kprobe.\n");
 		goto cleanup;
 	}
 
-	/* terminate program on demand, since after this loader exists,
-	 * kprobe and bpf prog will be destroyed
-	 */
-	printf("press enter to terminate...");
-	getchar();
-cleanup:
-	bpf_object__close(obj);
-	close(tstamp_map_fd);
-	close(path_map_fd);
-	bpf_link__destroy(link);
-#if 0
-	/* load program */
-	err = bpf_prog_load(obj_file, BPF_PROG_TYPE_KPROBE, &obj, &prog_fd);
-	if (CHECK(err, "bpf_prog_load", "err %d errno %d\n", err, errno)) {
-		return 0;
-	}
+	*obj_p  = obj;
+	*link_p = link;
 
-	/* get prog struct */
-	prog = bpf_object__find_program_by_title(obj, prog_sec);
-	if (CHECK(!prog, "bpf_object__find_program_by_title", "prog not found!\n")) {
-		goto cleanup;
-	}
-
-	/* get map struct and fd */
-	map = bpf_object__find_map_by_name(obj, map_name);
-	if (CHECK(!map, "bpf_object__find_map_by_name", "%s not found\n", map_name)) {
-		goto cleanup;
-	}
-
-	map_fd = bpf_map__fd(map);
-	if (CHECK(map_fd < 0, "bpf_map__fd", "err %d\n", map_fd)) {
-		goto cleanup;
-	}
-
-	/* attach program to kprobe */
-	link = bpf_program__attach_kprobe(prog, false /* retprobe */, kprobe_name);
-	if (CHECK(IS_ERR(link), "bpf_program__attach_kprobe", "err %ld\n", PTR_ERR(link))) {
-		link = NULL;
-		goto cleanup;
-	}
-
-	/* terminate program on demand, since after this loader exists,
-	 * kprobe and bpf prog will be destroyed
-	 */
-	printf("press enter to terminate...");
-	getchar();
-cleanup:
-	bpf_link__destroy(link);
-	bpf_object__close(obj);
-
-#endif
 	return 0;
+
+cleanup:
+	bpf_link__destroy(link);
+	bpf_object__close(obj);
+
+	return -1;
 }
 
+int main()
+{
+	FILE *kp_funcs = fopen("kp_funcs.list", "r");
+	char kp_names[128][128], cur_name[128];
+	int kp_amt;
+	int kp_fin, r;
+
+	kp_amt = 0;
+	r = fscanf(kp_funcs, "%s %i\n", cur_name, &kp_fin);
+	while(r != EOF) {
+		if (kp_amt == 128) {
+			printf("Too many kprobes!\n");
+			fclose(kp_funcs);
+			exit(EXIT_FAILURE);
+		}
+
+		cur_name[127] = 0;
+		strcpy(kp_names[kp_amt], cur_name);
+
+		r = fscanf(kp_funcs, "%s %i\n", cur_name, &kp_fin);
+		++kp_amt;
+	}
+	fclose(kp_funcs);
+	--kp_amt;
+
+	int skb_map_fd = -1;
+	int path_map_fd = -1;
+
+	skb_map_fd = bpf_obj_get(MAP_PIN_PATH SKB_MAP);
+	if (skb_map_fd < 0) {
+		printf("Map \"%s\" not found! Check \"/sys/fs/bpf/tc/globals\" directory.\n", SKB_MAP);
+		goto map_cleanup;
+	}
+	path_map_fd = bpf_obj_get(MAP_PIN_PATH PATH_MAP);
+	if (path_map_fd < 0) {
+		printf("Map \"%s\" not found! Check \"/sys/fs/bpf/tc/globals\" directory.\n", PATH_MAP);
+		goto map_cleanup;
+	}
+
+	struct bpf_object *kp_objs[128];
+	struct bpf_link *kp_links[128];
+	for (int i = 0; i <= kp_amt; ++i) {
+		kp_objs[i] = NULL;
+		kp_links[i] = NULL;
+		r = load_and_attach(kp_names[i], skb_map_fd, path_map_fd,
+				    &kp_objs[i], &kp_links[i]);
+		if (r) {
+			goto prog_cleanup;
+		}
+	}
+	
+	/* terminate program on demand, since after this loader exists,
+	 * kprobe and bpf prog will be destroyed
+	 */
+	printf("press enter to terminate...");
+	getchar();
+
+prog_cleanup:
+	for (int i = 0; i <= kp_amt; ++i) {
+		bpf_link__destroy(kp_links[i]);
+		bpf_object__close(kp_objs[i]);
+	}
+map_cleanup:
+	close(skb_map_fd);
+	close(path_map_fd);
+
+	return 0;
+}
