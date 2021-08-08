@@ -4,6 +4,8 @@ import argparse
 import socket
 import pyroute2
 
+from bcc import BPF
+
 from tc_bpf_prog import tc_generate_and_load
 from kp_bpf_prog import kp_generate_and_load
 
@@ -91,6 +93,16 @@ if __name__ == '__main__':
 
 	print(tc_filter)
 
-	tc_generate_and_load(tc_filter)
+	b = tc_generate_and_load(tc_filter)
 
-	kp_generate_and_load()
+	bpfs = kp_generate_and_load()
+	bpfs.append(b)
+	try:
+		while True:
+			for b in bpfs:
+				b.ring_buffer_poll()
+				print("try another")
+	except KeyboardInterrupt:
+		link = tc_filter['link']
+		ipr = pyroute2.IPRoute()
+		ipr.tc("del", "clsact", link)

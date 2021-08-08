@@ -2,19 +2,50 @@
 
 import pyroute2
 import socket
+import ctypes as ct
 
 from bcc import BPF
 
 tc_prog="""
+#include <uapi/linux/bpf.h>
+#include <uapi/linux/pkt_cls.h>
 #include <uapi/linux/if_ether.h>
 #include <uapi/linux/ip.h>
 #include <uapi/linux/tcp.h>
 #include <uapi/linux/udp.h>
 
-#include <uapi/linux/bpf.h>
-#include <uapi/linux/pkt_cls.h>
+#include <linux/sched.h>
+
+#define FN_NAME_LEN 64
+#define FN_NAME_STR "ingress_tc_hook"
 
 BPF_TABLE_PUBLIC("array", u32, void*, skb_ptr, 1);
+
+BPF_RINGBUF_OUTPUT(tracing_info, 128);
+
+struct tracing_data {
+	//u64  tgid_pid;
+	//u64  gid_uid;
+	//char task_comm[TASK_COMM_LEN];
+
+	char fn_name[FN_NAME_LEN];
+	u64  timestamp;
+};
+
+static __always_inline struct tracing_data get_tracing_data()
+{
+	struct tracing_data tr_data = {
+		.fn_name = FN_NAME_STR
+	};
+
+	//tr_data.tgid_pid = bpf_get_current_pid_tgid();
+	//tr_data.gid_uid = bpf_get_current_uid_gid();
+	//bpf_get_current_comm(&tr_data.task_comm, TASK_COMM_LEN);
+
+	tr_data.timestamp = bpf_ktime_get_ns();
+
+	return tr_data;
+}
 
 int filter(struct __sk_buff *skb)
 {
@@ -58,8 +89,8 @@ int filter(struct __sk_buff *skb)
 	//void *skb_ptr_store = (void *)skb;
 	skb_ptr.update(&skb_key, (void **)&skb);
 
-	u64 timestamp = bpf_ktime_get_ns();
-	bpf_trace_printk("Timestamp: %llu", timestamp);
+	struct tracing_data tr_data = get_tracing_data();
+	tracing_info.ringbuf_output(&tr_data, sizeof(tr_data), BPF_RB_FORCE_WAKEUP /* flags */);
 
 	return TC_ACT_OK;
 }
@@ -105,6 +136,17 @@ def tc_generate(tc_filter):
 			"if (data + sizeof(*eth) + sizeof(*iph) > data_end) return TC_ACT_OK;")
 		tc_prog = tc_prog.replace('PORT_FILTER', "")
 
+TASK_COMM_LEN = 16    # linux/sched.h
+FN_NAME_LEN   = 64
+class tracing_data(ct.Structure):
+    _fields_ = [("fn_name", ct.c_char * FN_NAME_LEN),
+                ("timestamp", ct.c_uint64)]
+
+def tracing_event(ctx, data, size):
+	tr_data = ct.cast(data, ct.POINTER(tracing_data)).contents
+
+	print(f"fn: {tr_data.fn_name.decode('utf-8')}  ts: {tr_data.timestamp}")
+
 def tc_generate_and_load(tc_filter):
 	tc_generate(tc_filter)
 
@@ -117,8 +159,6 @@ def tc_generate_and_load(tc_filter):
 	ipr.tc("add-filter", "bpf", link, ":1", fd=bpf_obj.fd, name=bpf_obj.name,
 		   parent="ffff:fff2", direct_action=True)
 
-	try:
-		pass
-		#b.trace_print()
-	except KeyboardInterrupt:
-		ipr.tc("del", "clsact", link)
+	b['tracing_info'].open_ring_buffer(tracing_event)
+
+	return b
