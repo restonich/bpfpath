@@ -5,6 +5,7 @@ import socket
 import pyroute2
 
 from tc_bpf_prog import tc_generate_and_load
+from kp_bpf_prog import kp_generate_and_load
 
 # Abcent from socket
 ETH_P_IP = 0x0800
@@ -92,3 +93,4 @@ if __name__ == '__main__':
 
 	tc_generate_and_load(tc_filter)
 
+	kp_generate_and_load()

@@ -20,8 +20,9 @@ int filter(struct __sk_buff *skb)
 {
 	/* Check current pointer
 	 * Key is always 0, skb_ptr array consists of only one element
-	 * skb_val != 0 means that the packet is already traced
-	 * or tracing is not yet initiated
+	 * skb_val == 0       -- tracing just initiated
+	 * skb_val == SKB_FIN -- tracing was concluded or not yet started
+	 * other skb_val is the pointer to the traced packet
 	 */
 	u32 skb_key = 0;
 	void **skb_val = NULL;
@@ -104,8 +105,6 @@ def tc_generate(tc_filter):
 			"if (data + sizeof(*eth) + sizeof(*iph) > data_end) return TC_ACT_OK;")
 		tc_prog = tc_prog.replace('PORT_FILTER', "")
 
-	print(tc_prog)
-
 def tc_generate_and_load(tc_filter):
 	tc_generate(tc_filter)
 
@@ -119,6 +118,7 @@ def tc_generate_and_load(tc_filter):
 		   parent="ffff:fff2", direct_action=True)
 
 	try:
-		b.trace_print()
+		pass
+		#b.trace_print()
 	except KeyboardInterrupt:
 		ipr.tc("del", "clsact", link)
