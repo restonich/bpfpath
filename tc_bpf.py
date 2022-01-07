@@ -7,7 +7,7 @@ import ctypes as ct
 from bcc import BPF
 
 def tc_generate(tc_filter):
-	bpf_text=open('bpf.c','r').read()
+	bpf_text = open('bpf.c','r').read()
 	
 	# Check IP protocol
 	if tc_filter['proto']:
@@ -55,15 +55,18 @@ def tc_generate(tc_filter):
 			'BOUNDS_CHECK',
 			"if (data + sizeof(*eth) + sizeof(*iph) > data_end) return TC_ACT_OK;")
 		bpf_text = bpf_text.replace('PORT_FILTER', "")
-	
+
+	tc_fwmark = tc_filter['fwmark'][0]
+	bpf_text = bpf_text.replace('TC_FWMARK', str(tc_fwmark))
+
 	return bpf_text
 
 def tc_load(bpf_obj, link):
-	bpf_fn = bpf_obj.load_func("filter", BPF.SCHED_CLS)
+	tc_func = bpf_obj.load_func("filter", BPF.SCHED_CLS)
 
 	ipr = pyroute2.IPRoute()
 	ipr.tc("add", "clsact", link)
-	ipr.tc("add-filter", "bpf", link, ":1", fd=bpf_fn.fd, name=bpf_fn.name,
+	ipr.tc("add-filter", "bpf", link, ":1", fd=tc_func.fd, name=tc_func.name,
 		   parent="ffff:fff2", direct_action=True)
 
 	bpf_obj['skb_ptr'][0] = ct.c_uint64(-1)

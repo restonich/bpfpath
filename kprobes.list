@@ -1,0 +1,65 @@
+:arg1:
+ip_rcv
+ip_rcv_core
+tcp_v4_rcv
+ip_local_deliver
+ip_route_input_noref
+ip_route_input_rcu
+ip_route_input_slow
+raw_local_deliver
+skb_copy_datagram_iter
+icmp_rcv
+icmp_err
+# icmp_send
+__icmp_send
+# icmp_get_route_lookup_dev
+icmp_ndo_send
+icmp_socket_deliver
+icmp_unreach
+icmp_redirect
+icmp_echo
+icmp_timestamp
+icmp_discard
+ip_mc_validate_source
+# __mkroute_input
+ip_route_use_hint
+
+# final ?
+sock_wfree
+__sock_wfree
+kfree_skb
+# skb_orphan
+__dev_kfree_skb_any
+__dev_kfree_skb_irq
+__kfree_skb_defer
+kfree_skb_partial
+
+# ???
+# when program is working on phy port and packet is routed to veth, tracing ends on fib_validate_source
+# hovewer sometimes it goes to consume_skb
+# skb->mark gets cleared after this...
+fib_validate_source
+__fib_validate_source
+
+
+:arg2:
+# icmp_reply
+ip_protocol_deliver_rcu
+tcp_v4_do_rcv
+tcp_rcv_established
+tcp_data_queue
+tcp_queue_rcv
+tcp_event_data_recv
+# __skb_queue_tail
+
+:arg3:
+__ip_options_echo
+ip_local_deliver_finish
+ip_rcv_finish
+# ip_rcv_finish_core
+
+:final:
+consume_skb
+skb_release_data
+kfree_skbmem
+__kfree_skb

@@ -5,8 +5,9 @@
 #include <uapi/linux/udp.h> 		/* struct udphdr */
 #include <linux/sched.h>			/* TASK_COMM_LEN */
 #include <uapi/linux/ptrace.h>		/* PT_REGS_IP */
-#include <linux/skbuff.h>
-#include <linux/netdevice.h>
+#include <linux/skbuff.h>			/* struct sk_buff */
+#include <linux/netdevice.h>		/* struct net_device */
+// #include <uapi/linux/if.h>			/* IFNAMSIZ */
 
 #define STOP_TRACE (void *)(-1llu)
 
@@ -14,15 +15,17 @@ BPF_ARRAY(skb_ptr, void*, 1);
 
 BPF_RINGBUF_OUTPUT(tracing_info, 32);
 
-#define TC_COMM "unknown_comm"
+#define TC_COMM "..."
 
 struct tracing_data {
+	u64  timestamp;
 	u64  tgid_pid;
 	u64  gid_uid;
 	char task_comm[TASK_COMM_LEN];
-
 	void *ip_ptr;
-	u64  timestamp;
+	u32 ns_index;
+	char ifname[IFNAMSIZ];
+	u32 fwmark;
 };
 
 
@@ -79,7 +82,7 @@ int filter(struct __sk_buff *skb)
 	/* Check port, either source or destination */
 	PORT_FILTER
 
-	skb->mark = 1337;
+	skb->mark = TC_FWMARK;
 
 	void *vall = (void*)skb;
 	skb_ptr.update(&skb_key, &vall);
@@ -90,7 +93,7 @@ int filter(struct __sk_buff *skb)
 	return TC_ACT_OK;
 }
 
-static __always_inline struct tracing_data __probe_tracing_data(struct pt_regs *ctx)
+static __always_inline struct tracing_data __probe_tracing_data(struct pt_regs *ctx, struct sk_buff *skb)
 {
 	struct tracing_data tr_data = {0};
 
@@ -101,10 +104,15 @@ static __always_inline struct tracing_data __probe_tracing_data(struct pt_regs *
 	tr_data.ip_ptr = (void *)PT_REGS_IP(ctx);
 	tr_data.timestamp = bpf_ktime_get_ns();
 
+	bpf_probe_read_kernel(&tr_data.ns_index, sizeof(u32), &skb->dev->nd_net.net->ns.inum);
+	bpf_probe_read_kernel(&tr_data.ifname, IFNAMSIZ, &skb->dev->name);
+
+	bpf_probe_read_kernel(&tr_data.fwmark, sizeof(u32), &skb->mark);
+
 	return tr_data;
 }
 
-int probe(struct pt_regs *ctx, struct sk_buff *skb)
+static __always_inline int probe_action(struct pt_regs *ctx, struct sk_buff *skb)
 {
 	/* Check current pointer
 	 * Key is always 0, skb_ptr array consists of only one element
@@ -122,30 +130,32 @@ int probe(struct pt_regs *ctx, struct sk_buff *skb)
 	/* tracing just started, run other kprobes in case pointer will be added */
 	if (*skb_val == 0) return 1;
 
-	// if ((struct sk_buff*)*skb_val != skb) return 1;
+	if ((struct sk_buff*)*skb_val != skb) return 1;
 	
-	if (skb->mark != 1337) return 0;
+	// if (skb->mark != TC_FWMARK) return 0;
 
-	struct tracing_data tr_data = __probe_tracing_data(ctx);
+	struct tracing_data tr_data = __probe_tracing_data(ctx, skb);
 	tracing_info.ringbuf_output(&tr_data, sizeof(tr_data), 0);
-
-	// int skb_iif;
-	// int ifindex;
-	// char name[16];
-	// bpf_probe_read_kernel(&skb_iif, sizeof(int), &skb->skb_iif);
-	// bpf_probe_read_kernel(&ifindex, sizeof(int), &skb->dev->ifindex);
-	// bpf_probe_read_kernel(&name, 16, &skb->dev->name);
-	// bpf_trace_printk("skb->skb_iif: %u", skb_iif);
-	// bpf_trace_printk("skb->dev->ifindex: %u", ifindex);
-	// bpf_trace_printk("skb->dev->name: %s", name);
-	// u32 mark;
-	// bpf_probe_read_kernel(&mark, sizeof(u32), &skb->mark);
-	// bpf_trace_printk("skb->mark: %llx", mark);
 
 	return 1;
 }
 
-int final_probe(struct pt_regs *ctx, struct sk_buff *skb)
+int probe_arg1(struct pt_regs *ctx, struct sk_buff *skb)
+{
+	return probe_action(ctx, skb);
+}
+
+int probe_arg2(struct pt_regs *ctx, void *arg1, struct sk_buff *skb)
+{
+	return probe_action(ctx, skb);
+}
+
+int probe_arg3(struct pt_regs *ctx, void *arg1, void* arg2, struct sk_buff *skb)
+{
+	return probe_action(ctx, skb);
+}
+
+int probe_final(struct pt_regs *ctx, struct sk_buff *skb)
 {
 	/* Check current pointer
 	 * Key is always 0, skb_ptr array consists of only one element
@@ -165,21 +175,10 @@ int final_probe(struct pt_regs *ctx, struct sk_buff *skb)
 
 	if ((struct sk_buff*)*skb_val != skb) return 1;
 
-	struct tracing_data tr_data = __probe_tracing_data(ctx);
+	// if (skb->mark != TC_FWMARK) return 0;
+
+	struct tracing_data tr_data = __probe_tracing_data(ctx, skb);
 	tracing_info.ringbuf_output(&tr_data, sizeof(tr_data), 0);
-	
-	int skb_iif;
-	int ifindex;
-	char name[16];
-	bpf_probe_read_kernel(&skb_iif, sizeof(int), &skb->skb_iif);
-	bpf_probe_read_kernel(&ifindex, sizeof(int), &skb->dev->ifindex);
-	bpf_probe_read_kernel(&name, 16, &skb->dev->name);
-	bpf_trace_printk("skb->skb_iif: %u", skb_iif);
-	bpf_trace_printk("skb->dev->ifindex: %u", ifindex);
-	bpf_trace_printk("skb->dev->name: %s", name);
-	u32 mark;
-	bpf_probe_read_kernel(&mark, sizeof(u32), &skb->mark);
-	bpf_trace_printk("skb->mark: %llx", mark);
 
 	void *skb_stop = STOP_TRACE;
 	skb_ptr.update(&skb_key, &skb_stop);
