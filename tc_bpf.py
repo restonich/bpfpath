@@ -1,7 +1,8 @@
 #!/usr/bin/python
 
 import pyroute2
-import socket
+import pr2modules
+from socket import IPPROTO_ICMP, IPPROTO_TCP
 import ctypes as ct
 
 from bcc import BPF
@@ -36,8 +37,8 @@ def tc_generate(tc_filter):
 	else:
 		bpf_text = bpf_text.replace('DST_IP_FILTER','')
 	
-	if tc_filter['port'] and tc_filter['proto'] is not socket.IPPROTO_ICMP:
-		filter_trans_hdr = "tcph" if tc_filter['proto'] is socket.IPPROTO_TCP else "udph"
+	if tc_filter['port'] and tc_filter['proto'] is not IPPROTO_ICMP:
+		filter_trans_hdr = "tcph" if tc_filter['proto'] is IPPROTO_TCP else "udph"
 		filter_port = tc_filter['port']
 
 		# Bounds check to filter out small packets
@@ -56,12 +57,12 @@ def tc_generate(tc_filter):
 			"if (data + sizeof(*eth) + sizeof(*iph) > data_end) return TC_ACT_OK;")
 		bpf_text = bpf_text.replace('PORT_FILTER', "")
 
-	tc_fwmark = tc_filter['fwmark'][0]
-	bpf_text = bpf_text.replace('TC_FWMARK', str(tc_fwmark))
+	# tc_fwmark = tc_filter['fwmark'][0]
+	# bpf_text = bpf_text.replace('TC_FWMARK', str(tc_fwmark))
 
 	return bpf_text
 
-def tc_load(bpf_obj, link):
+def tc_attach(bpf_obj, link):
 	tc_func = bpf_obj.load_func("filter", BPF.SCHED_CLS)
 
 	ipr = pyroute2.IPRoute()
@@ -73,4 +74,10 @@ def tc_load(bpf_obj, link):
 
 def tc_unload(link):
 	ipr = pyroute2.IPRoute()
-	ipr.tc("del", "clsact", link)
+	clsact = ('TCA_KIND', 'clsact')
+	for qdisc in ipr.get_qdiscs(link):
+		# This dumb shit uses its own class pr2modules.netlink.nla_slot for attrs
+		# so I have to do it that way
+		for attr in qdisc['attrs']:
+			if attr[0] == clsact[0] and attr[1] == clsact[1]:
+				ipr.tc("del", "clsact", link)

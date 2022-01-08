@@ -23,9 +23,8 @@ struct tracing_data {
 	u64  gid_uid;
 	char task_comm[TASK_COMM_LEN];
 	void *ip_ptr;
-	u32 ns_index;
+	u32 netns_inode;
 	char ifname[IFNAMSIZ];
-	u32 fwmark;
 };
 
 
@@ -82,8 +81,6 @@ int filter(struct __sk_buff *skb)
 	/* Check port, either source or destination */
 	PORT_FILTER
 
-	skb->mark = TC_FWMARK;
-
 	void *vall = (void*)skb;
 	skb_ptr.update(&skb_key, &vall);
 
@@ -104,10 +101,8 @@ static __always_inline struct tracing_data __probe_tracing_data(struct pt_regs *
 	tr_data.ip_ptr = (void *)PT_REGS_IP(ctx);
 	tr_data.timestamp = bpf_ktime_get_ns();
 
-	bpf_probe_read_kernel(&tr_data.ns_index, sizeof(u32), &skb->dev->nd_net.net->ns.inum);
+	bpf_probe_read_kernel(&tr_data.netns_inode, sizeof(u32), &skb->dev->nd_net.net->ns.inum);
 	bpf_probe_read_kernel(&tr_data.ifname, IFNAMSIZ, &skb->dev->name);
-
-	bpf_probe_read_kernel(&tr_data.fwmark, sizeof(u32), &skb->mark);
 
 	return tr_data;
 }
@@ -131,8 +126,6 @@ static __always_inline int probe_action(struct pt_regs *ctx, struct sk_buff *skb
 	if (*skb_val == 0) return 1;
 
 	if ((struct sk_buff*)*skb_val != skb) return 1;
-	
-	// if (skb->mark != TC_FWMARK) return 0;
 
 	struct tracing_data tr_data = __probe_tracing_data(ctx, skb);
 	tracing_info.ringbuf_output(&tr_data, sizeof(tr_data), 0);
@@ -174,8 +167,6 @@ int probe_final(struct pt_regs *ctx, struct sk_buff *skb)
 	if (*skb_val == 0) return 1;
 
 	if ((struct sk_buff*)*skb_val != skb) return 1;
-
-	// if (skb->mark != TC_FWMARK) return 0;
 
 	struct tracing_data tr_data = __probe_tracing_data(ctx, skb);
 	tracing_info.ringbuf_output(&tr_data, sizeof(tr_data), 0);

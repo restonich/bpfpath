@@ -4,7 +4,7 @@ import ctypes as ct
 
 from bcc import BPF
 
-def kp_load(bpf_obj):
+def kp_attach(bpf_obj):
 	kprobes = []
 	with open('kprobes.list', 'r') as kprobes_list:
 		for line in kprobes_list:

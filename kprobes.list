@@ -12,7 +12,7 @@ icmp_rcv
 icmp_err
 # icmp_send
 __icmp_send
-# icmp_get_route_lookup_dev
+# 90
 icmp_ndo_send
 icmp_socket_deliver
 icmp_unreach
@@ -35,7 +35,8 @@ __kfree_skb_defer
 kfree_skb_partial
 
 # ???
-# when program is working on phy port and packet is routed to veth, tracing ends on fib_validate_source
+# when program is working on phy port and packet is routed to veth to netns,
+# tracing ends on fib_validate_source
 # hovewer sometimes it goes to consume_skb
 # skb->mark gets cleared after this...
 fib_validate_source

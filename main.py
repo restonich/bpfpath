@@ -1,30 +1,21 @@
 #!/usr/bin/python
 
 import argparse
-import socket
+import time
+import subprocess
+import signal
+import multiprocessing
 import pyroute2
-import ctypes as ct
 import keyboard
 
+import ctypes as ct
+from socket import IPPROTO_ICMP, IPPROTO_TCP, IPPROTO_UDP, AF_INET, inet_pton
 from bcc import BPF
 
-from tc_bpf import tc_generate, tc_load, tc_unload
-from kp_bpf import kp_load
+from tc_bpf import tc_generate, tc_attach, tc_unload
+from kp_bpf import kp_attach
 
 def parse_tc_filter(args):
-	'''
-	Args:
-		args (str): 
-
-	Returns:
-		tc_filter (dict):
-			'link'
-			'proto'
-			'src'
-			'dst'
-			'port'
-			'fwmark'
-	'''
 	tc_filter = {}
 
 	ipr = pyroute2.IPRoute()
@@ -38,16 +29,16 @@ def parse_tc_filter(args):
 		tc_filter['proto'] = None
 	else:
 		tc_filter['proto'] = {
-			'icmp' : socket.IPPROTO_ICMP,
-			'tcp'  : socket.IPPROTO_TCP,
-			'udp'  : socket.IPPROTO_UDP
+			'icmp' : IPPROTO_ICMP,
+			'tcp'  : IPPROTO_TCP,
+			'udp'  : IPPROTO_UDP
 		}[args.proto]
 
 	if not args.src:
 		tc_filter['src'] = None
 	else:
 		try:
-			tc_filter['src'] = int.from_bytes(socket.inet_pton(socket.AF_INET, args.src), 'big')
+			tc_filter['src'] = int.from_bytes(inet_pton(AF_INET, args.src), 'big')
 		except OSError as e:
 			print(f"Source IP is not valid: {e}")
 			return None
@@ -56,7 +47,7 @@ def parse_tc_filter(args):
 		tc_filter['dst'] = None
 	else:
 		try:
-			tc_filter['dst'] = int.from_bytes(socket.inet_pton(socket.AF_INET, args.dst), 'big')
+			tc_filter['dst'] = int.from_bytes(inet_pton(AF_INET, args.dst), 'big')
 		except OSError as e:
 			print(f"Destination IP is not valid: {e}")
 			return None
@@ -67,25 +58,119 @@ def parse_tc_filter(args):
 
 	tc_filter['port'] = args.port
 
-	fwmark_bin = bin(int(args.fwmark, 16))
-	fwmark_min = 2 ** (len(fwmark_bin) - fwmark_bin.rfind('1') - 1)
-	fwmark_max = int(args.fwmark, 16)
-	tc_filter['fwmark'] = (fwmark_min, fwmark_max)
+	# fwmark_bin = bin(int(args.fwmark, 16))
+	# fwmark_min = 2 ** (len(fwmark_bin) - fwmark_bin.rfind('1') - 1)
+	# fwmark_max = int(args.fwmark, 16)
+	# tc_filter['fwmark'] = (fwmark_min, fwmark_max)
 
 	return tc_filter
 
-# TASK_COMM_LEN = 16    # linux/sched.h
-# class tracing_data(ct.Structure):
-#     _fields_ = [("tgid_pid", ct.c_uint64),
-# 				("gid_uid", ct.c_uint64),
-# 				("task_comm", ct.c_char * TASK_COMM_LEN),
-# 				("ip_ptr", ct.c_void_p),
-#               ("timestamp", ct.c_uint64)]
+def generate_and_attach(tc_filter):
+	bpf_obj = None
+
+	try:
+		bpf_text = tc_generate(tc_filter)
+		bpf_obj = BPF(text=bpf_text)
+	except Exception as e:
+		print(f"Failed to create BPF object: {e}")
+		exit(1)
+
+	try:
+		tc_attach(bpf_obj, tc_filter['link'])
+	except Exception as e:
+		print(f"Failed to attach TC programs: {e}")
+		print("Detaching BPF programs...")
+		tc_unload(tc_filter['link'])
+		exit(1)
+
+	try:
+		kp_attach(bpf_obj)
+	except Exception as e:
+		print(f"Failed to attach KP programs: {e}")
+		print("Detaching BPF programs...")
+		tc_unload(tc_filter['link'])
+		exit(1)
+
+	return bpf_obj
+
+class TerminateTracing(Exception):
+	pass
+
+def signal_handler(signum, frame):
+	if signum == signal.SIGTERM:
+		raise TerminateTracing
+
+def bpf_trace_and_print(interval, bpf_obj, tc_filter):
+	OUTPUR_COLS = ('TS', 'COMM', 'PID', 'TID', 'UID', 'GID', 'netns', 'IFNAME', 'FUNC')
+	OUTPUT_FORMAT = "{:<16} {:<16} {:>6}.{:<6} {:>6}|{:<6} {:<16} {:<18} {}()"
+
+	netns_names = {}
+	netns_list = subprocess.check_output(
+		"ls -1 -L -i /run/netns",
+		shell=True,
+		stderr=subprocess.STDOUT).decode('utf-8').splitlines()
+
+	for line in netns_list:
+		inode_name = line.split(' ')
+		netns_names[inode_name[0]] = inode_name[1]
+
+	def tracing_event(ctx, data, size):
+		tr_data = bpf_obj["tracing_info"].event(data)
+
+		pid = tr_data.tgid_pid >> 32
+		tid = tr_data.tgid_pid & 0xFFFFFFFF
+		gid = tr_data.gid_uid >> 32
+		uid = tr_data.gid_uid & 0xFFFFFFFF
+		ts = tr_data.timestamp
+		comm = tr_data.task_comm.decode('utf-8')
+		ifname = tr_data.ifname.decode('utf-8')
+		ifname = ifname if ifname != '' else '...'
+		netns_name = netns_names.get(tr_data.netns_inode, "default")
+
+		if tr_data.ip_ptr is None:
+			func = "tc_ingress_hook"
+		else:
+			func = bpf_obj.ksym(tr_data.ip_ptr).decode('utf-8')
+
+		print(OUTPUT_FORMAT.format(ts, comm, pid, tid, uid, gid, netns_name, ifname, func))
+
+	bpf_obj['tracing_info'].open_ring_buffer(tracing_event)
+
+	bpf_obj['skb_ptr'][0] = ct.c_uint64(0)
+	print("Tracing started. Press Ctrl+C to exit")
+	print(OUTPUT_FORMAT.format(*OUTPUR_COLS))
+	try:
+		while True:
+			if bpf_obj['skb_ptr'][0].value == ct.c_uint64(-1).value:
+				print("Tracing is finished")
+				if interval:
+					time.sleep(1)
+				else:
+					print("Press SPACE to run again")
+					keyboard.wait('space')
+				print("\nTracing started. Press Ctrl+C to exit")
+				print(OUTPUT_FORMAT.format(*OUTPUR_COLS))
+				bpf_obj['skb_ptr'][0] = ct.c_uint64(0)
+
+			bpf_obj.ring_buffer_poll()
+	except (KeyboardInterrupt, TerminateTracing):
+		print("Terminate. Detaching BPF programs...")
+		tc_unload(tc_filter['link'])
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser(
 		description="Show network packet path through Linux kernel")
-	
+
+	parser.add_argument(
+		'-i',
+		type=int,
+		default=0,
+		help="Interval in seconds between tracing events. Default is 0")
+	parser.add_argument(
+		'-t',
+		type=int,
+		default=0,
+		help="Timeout in seconds to stop tracing. Default is 0")
 	parser.add_argument(
 		'--link',
 		type=str,
@@ -108,11 +193,11 @@ if __name__ == '__main__':
 		'--port',
 		type=int,
 		help="Port number of TCP/UDP. Source or destination")
-	parser.add_argument(
-		'--fwmark',
-		type=str,
-		default='0x3',
-		help="Specify fwmark mask to mark the packets for tracing. Should not collide with other utilities using fwmark. Default is 0x3")
+	# parser.add_argument(
+	# 	'--fwmark',
+	# 	type=str,
+	# 	default='0x3',
+	# 	help="Specify fwmark mask to mark the packets for tracing. Should not collide with other utilities using fwmark. Default is 0x3")
 
 	args = parser.parse_args()
 	tc_filter = parse_tc_filter(args)
@@ -121,46 +206,26 @@ if __name__ == '__main__':
 		exit(1)
 
 	print(tc_filter)
+	bpf_obj = generate_and_attach(tc_filter)
 
-	bpf_text = tc_generate(tc_filter)
-	bpf_obj = BPF(text=bpf_text)
+	signal.signal(signal.SIGTERM, signal_handler)
 
-	tc_load(bpf_obj, tc_filter['link'])
-	kp_load(bpf_obj)
+	tracing_proc = multiprocessing.Process(
+		target=bpf_trace_and_print,
+		name="Tracing process",
+		args=(args.i, bpf_obj, tc_filter))
 
-	def tracing_event(ctx, data, size):
-		tr_data = bpf_obj["tracing_info"].event(data)
+	tracing_proc.start()
 
-		pid = tr_data.tgid_pid >> 32
-		tid = tr_data.tgid_pid & 0xFFFFFFFF
-		gid = tr_data.gid_uid >> 32
-		uid = tr_data.gid_uid & 0xFFFFFFFF
-		ts = tr_data.timestamp
-		comm = tr_data.task_comm.decode('utf-8')
-		net_ns = tr_data.ns_index
-		ifname = tr_data.ifname.decode('utf-8')
-
-		if tr_data.ip_ptr is None:
-			fn = "tc_ingress_hook"
-		else:
-			fn = bpf_obj.ksym(tr_data.ip_ptr).decode('utf-8')
-		
-		print(f"{ts} | [{comm}]({pid}.{tid}) {uid}({gid}) {fn}()  {net_ns}  {ifname} fwmark: {tr_data.fwmark}")
-	
-	bpf_obj['tracing_info'].open_ring_buffer(tracing_event)
-	
-	bpf_obj['skb_ptr'][0] = ct.c_uint64(0)
-	print("Tracing started")
 	try:
-		while True:
-			if bpf_obj['skb_ptr'][0].value == ct.c_uint64(-1).value:
-				print("Tracing is finished. Press SPACE to run again.")
-				keyboard.wait('space')
-				print("\nStarting again")
-				bpf_obj['skb_ptr'][0] = ct.c_uint64(0)
-			bpf_obj.ring_buffer_poll()
+		if args.t:
+			tracing_proc.join(args.t)
+		else:
+			tracing_proc.join()
 
-			# bpf_obj.trace_print()
+		if args.t != 0 and tracing_proc.is_alive():
+			tracing_proc.terminate()
 	except KeyboardInterrupt:
-		print("\nUnloading programs...")
-		tc_unload(tc_filter['link'])
+		pass
+
+	exit(0)
