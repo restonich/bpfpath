@@ -112,7 +112,7 @@ def bpf_trace_and_print(interval, bpf_obj, tc_filter):
 
 	for line in netns_list:
 		inode_name = line.split(' ')
-		netns_names[inode_name[0]] = inode_name[1]
+		netns_names[int(inode_name[0], 10)] = inode_name[1]
 
 	def tracing_event(ctx, data, size):
 		tr_data = bpf_obj["tracing_info"].event(data)
