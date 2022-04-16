@@ -12,7 +12,7 @@ icmp_rcv
 icmp_err
 # icmp_send
 __icmp_send
-# 90
+# icmp_get_route_lookup_dev
 icmp_ndo_send
 icmp_socket_deliver
 icmp_unreach
