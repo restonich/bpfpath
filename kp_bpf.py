@@ -1,12 +1,14 @@
 #!/usr/bin/python
 
-import ctypes as ct
+import os
 
 from bcc import BPF
 
+WORK_DIR=os.path.dirname(os.path.abspath(__file__))
+
 def kp_attach(bpf_obj):
 	kprobes = []
-	with open('kprobes.list', 'r') as kprobes_list:
+	with open(WORK_DIR + '/kprobes.list', 'r') as kprobes_list:
 		for line in kprobes_list:
 			line = line.rstrip()
 			if line != '' and line[0] != '#':

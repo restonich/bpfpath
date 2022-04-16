@@ -1,5 +1,6 @@
 #!/usr/bin/python
 
+import os
 import pyroute2
 import pr2modules
 from socket import IPPROTO_ICMP, IPPROTO_TCP
@@ -7,8 +8,10 @@ import ctypes as ct
 
 from bcc import BPF
 
+WORK_DIR=os.path.dirname(os.path.abspath(__file__))
+
 def tc_generate(tc_filter):
-	bpf_text = open('bpf.c','r').read()
+	bpf_text = open(WORK_DIR + '/bpf.c','r').read()
 	
 	# Check IP protocol
 	if tc_filter['proto']:

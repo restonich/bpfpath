@@ -1,5 +1,6 @@
 #!/usr/bin/python
 
+import os
 import argparse
 import time
 import subprocess
@@ -14,6 +15,8 @@ from bcc import BPF
 
 from tc_bpf import tc_generate, tc_attach, tc_unload
 from kp_bpf import kp_attach
+
+WORK_DIR=os.path.dirname(os.path.abspath(__file__))
 
 def parse_tc_filter(args):
 	tc_filter = {}

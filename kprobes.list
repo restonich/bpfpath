@@ -27,7 +27,6 @@ ip_route_use_hint
 # final ?
 sock_wfree
 __sock_wfree
-kfree_skb
 # skb_orphan
 __dev_kfree_skb_any
 __dev_kfree_skb_irq
@@ -61,6 +60,7 @@ ip_rcv_finish
 
 :final:
 consume_skb
+kfree_skb
 skb_release_data
 kfree_skbmem
 __kfree_skb
