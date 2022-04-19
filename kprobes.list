@@ -3,11 +3,13 @@ ip_rcv
 ip_rcv_core
 tcp_v4_rcv
 ip_local_deliver
+ip_forward
 ip_route_input_noref
 ip_route_input_rcu
 ip_route_input_slow
 raw_local_deliver
 skb_copy_datagram_iter
+skb_copy_datagram_from_iter
 icmp_rcv
 icmp_err
 # icmp_send
@@ -23,6 +25,9 @@ icmp_discard
 ip_mc_validate_source
 # __mkroute_input
 ip_route_use_hint
+udp_rcv
+udp_err
+udp_v4_early_demux
 
 # final ?
 sock_wfree
@@ -50,13 +55,23 @@ tcp_rcv_established
 tcp_data_queue
 tcp_queue_rcv
 tcp_event_data_recv
+tcp_rcv_state_process
 # __skb_queue_tail
+udp_queue_rcv_one_skb
+udp_queue_rcv_skb
+skb_consume_udp
+udp_unicast_rcv_skb
+__sk_add_backlog
+sk_add_backlog
+__sk_backlog_rcv
 
 :arg3:
 __ip_options_echo
 ip_local_deliver_finish
 ip_rcv_finish
+ip_forward_finish
 # ip_rcv_finish_core
+tcp_child_process
 
 :final:
 consume_skb
