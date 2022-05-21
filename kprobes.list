@@ -61,8 +61,8 @@ udp_queue_rcv_one_skb
 udp_queue_rcv_skb
 skb_consume_udp
 udp_unicast_rcv_skb
-__sk_add_backlog
-sk_add_backlog
+# __sk_add_backlog
+# sk_add_backlog
 __sk_backlog_rcv
 
 :arg3:

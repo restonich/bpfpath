@@ -104,8 +104,8 @@ def signal_handler(signum, frame):
 		raise TerminateTracing
 
 def bpf_trace_and_print(interval, bpf_obj, tc_filter):
-	OUTPUR_COLS = ('TS', 'COMM', 'PID', 'TID', 'UID', 'GID', 'netns', 'IFNAME', 'FUNC')
-	OUTPUT_FORMAT = "{:<16} {:<16} {:>6}.{:<6} {:>6}|{:<6} {:<16} {:<18} {}()"
+	OUTPUR_COLS = ('TS', 'COMM', 'PID', 'UID', 'NETNS', 'IFNAME', 'FUNC')
+	OUTPUT_FORMAT = "{:<16} {:<16} {:<6} {:<6} {:<16} {:<18} {}()"
 
 	netns_names = {}
 	netns_list = subprocess.check_output(
@@ -120,10 +120,8 @@ def bpf_trace_and_print(interval, bpf_obj, tc_filter):
 	def tracing_event(ctx, data, size):
 		tr_data = bpf_obj["tracing_info"].event(data)
 
-		pid = tr_data.tgid_pid >> 32
-		tid = tr_data.tgid_pid & 0xFFFFFFFF
-		gid = tr_data.gid_uid >> 32
-		uid = tr_data.gid_uid & 0xFFFFFFFF
+		pid = tr_data.pid
+		uid = tr_data.uid
 		ts = tr_data.timestamp
 		comm = tr_data.task_comm.decode('utf-8')
 		ifname = tr_data.ifname.decode('utf-8')
@@ -135,7 +133,7 @@ def bpf_trace_and_print(interval, bpf_obj, tc_filter):
 		else:
 			func = bpf_obj.ksym(tr_data.ip_ptr).decode('utf-8')
 
-		print(OUTPUT_FORMAT.format(ts, comm, pid, tid, uid, gid, netns_name, ifname, func))
+		print(OUTPUT_FORMAT.format(ts, comm, pid, uid, netns_name, ifname, func))
 
 	bpf_obj['tracing_info'].open_ring_buffer(tracing_event)
 

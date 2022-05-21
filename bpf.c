@@ -19,8 +19,8 @@ BPF_RINGBUF_OUTPUT(tracing_info, 32);
 
 struct tracing_data {
 	u64  timestamp;
-	u64  tgid_pid;
-	u64  gid_uid;
+	u32  pid;
+	u32  uid;
 	char task_comm[TASK_COMM_LEN];
 	void *ip_ptr;
 	u32 netns_inode;
@@ -94,8 +94,8 @@ static __always_inline struct tracing_data __probe_tracing_data(struct pt_regs *
 {
 	struct tracing_data tr_data = {0};
 
-	tr_data.tgid_pid = bpf_get_current_pid_tgid();
-	tr_data.gid_uid = bpf_get_current_uid_gid();
+	tr_data.pid = bpf_get_current_pid_tgid();
+	tr_data.uid = bpf_get_current_uid_gid();
 	bpf_get_current_comm(&tr_data.task_comm, TASK_COMM_LEN);
 
 	tr_data.ip_ptr = (void *)PT_REGS_IP(ctx);
