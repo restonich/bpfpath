@@ -3,3 +3,5 @@ __pycache__
 *.log
 iperf.pid
 iperf.file
+
+testing/logs

@@ -108,10 +108,15 @@ def bpf_trace_and_print(interval, bpf_obj, tc_filter):
 	OUTPUT_FORMAT = "{:<16} {:<16} {:<6} {:<6} {:<16} {:<18} {}()"
 
 	netns_names = {}
-	netns_list = subprocess.check_output(
-		"ls -1 -L -i /run/netns",
-		shell=True,
-		stderr=subprocess.STDOUT).decode('utf-8').splitlines()
+	netns_list = []
+	try:
+		netns_list = subprocess.check_output(
+			"ls -1 -L -i /run/netns",
+			shell=True,
+			stderr=subprocess.STDOUT).decode('utf-8').splitlines()
+	except subprocess.CalledProcessError as e:
+		# print(f"Can't fetch network namespaces: {e}")
+		print("Other netns not found")
 
 	for line in netns_list:
 		inode_name = line.split(' ')
@@ -126,7 +131,7 @@ def bpf_trace_and_print(interval, bpf_obj, tc_filter):
 		comm = tr_data.task_comm.decode('utf-8')
 		ifname = tr_data.ifname.decode('utf-8')
 		ifname = ifname if ifname != '' else '...'
-		netns_name = netns_names.get(tr_data.netns_inode, "default")
+		netns_name = netns_names.get(tr_data.netns_inode, "root")
 
 		if tr_data.ip_ptr is None:
 			func = "tc_ingress_hook"

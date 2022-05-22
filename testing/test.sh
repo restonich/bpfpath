@@ -1,60 +1,58 @@
 #!/bin/bash
 set -e
 
-TESTDIR="/home/mkov/testing"
-:> $TESTDIR/iperf.log
+TESTDIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]:-$0}"; )" &> /dev/null && pwd 2> /dev/null; )";
+LOGDIR=$TESTDIR/logs
+[ -d $LOGDIR ] || mkdir $LOGDIR
+
+:> $LOGDIR/iperf.log
 
 echo -ne "STARTING IPERF SERVER -- "
-ip netns exec iperf_ns iperf3 -s -B 10.4.21.2 -p 1337 -F $TESTDIR/iperf.file --logfile $TESTDIR/iperf.log -D -I $TESTDIR/iperf.pid
+ip netns exec iperf_ns iperf3 -s -B 10.4.21.2 -p 1337 -F $LOGDIR/iperf.file --logfile $LOGDIR/iperf.log -D -I $LOGDIR/iperf.pid
 echo -ne "OK\n"
 
 echo -ne "\n================\n" 
 echo -ne "CLEAR RUN\n"
 echo -ne "================\n" 
-for i in {1..3}; do
+for i in {1..100}; do
 	echo -ne "\nCYCLE ${i}\n"
 	echo -ne "----------------\n" 
 
 	echo -ne "STARTING SAR -- "
-	sar -o $TESTDIR/clean_sar${i}.root 1 60 >/dev/null 2>&1 &
-	ip netns exec iperf_ns sar -o $TESTDIR/clean_sar${i}.iperf_ns 1 60 >/dev/null 2>&1 &
+	sar -o $LOGDIR/clean_sar${i}.root 1 20 >/dev/null 2>&1 &
 	echo -ne "OK\n"
 
-	sleep 10
+	sleep 4
 
 	echo -ne "STARTING IPERF CLIENT\n"
-	ssh -i /home/mkov/.ssh/id_rsa mkov@10.4.20.11 -t 'iperf3 -p 1337 -i 0 -t 30 -c 10.4.21.2'
+	ssh -i /home/mkov/.ssh/id_rsa mkov@10.4.20.11 -t 'iperf3 -p 1337 -i 0 -t 14 -c 10.4.21.2'
 
-	sleep 25
+	sleep 2
 done
 
 echo -ne "\n================\n" 
 echo -ne "BPF RUN\n"
 echo -ne "================\n" 
-for i in {1..3}; do
+for i in {1..100}; do
 	echo -ne "\nCYCLE ${i}\n"
 	echo -ne "----------------\n" 
 
 	echo -ne "STARTING SAR -- "
-	sar -o $TESTDIR/bpf_sar${i}.root 1 60 >/dev/null 2>&1 &
-	ip netns exec iperf_ns sar -o $TESTDIR/bpf_sar${i}.iperf_ns 1 60 >/dev/null 2>&1 &
+	sar -o $LOGDIR/bpf_sar${i}.root 1 20 >/dev/null 2>&1 &
 	echo -ne "OK\n"
 
-	sleep 10
+	sleep 4
 
 	echo -ne "STARTING BPF -- "
-	/home/mkov/proj/bpfpath/main.py --link ens34 --proto tcp --dst 10.4.21.2 --port 1337 -i 1 -t 40 &>$TESTDIR/bpfpath${i}.out &
+	/home/mkov/proj/bpfpath/bpfpath.py --link ens34 --proto tcp --dst 10.4.21.2 --port 1337 -i 1 -t 15 &>$LOGDIR/bpfpath${i}.out &
 	echo -ne "OK\n"
 
-	sleep 5
-
 	echo -ne "STARTING IPERF CLIENT\n"
-	ssh -i /home/mkov/.ssh/id_rsa mkov@10.4.20.11 -t 'iperf3 -p 1337 -i 0 -t 30 -c 10.4.21.2'
+	ssh -i /home/mkov/.ssh/id_rsa mkov@10.4.20.11 -t 'iperf3 -p 1337 -i 0 -t 14 -c 10.4.21.2'
 
-	sleep 20
+	sleep 2
 done
 
 echo -ne "\nKILLING IPERF SERVER\n"
-kill -15 $(cat $TESTDIR/iperf.pid)
+kill -15 $(tr -d '\0' <$LOGDIR/iperf.pid)
 echo -ne "OK\n"
-
